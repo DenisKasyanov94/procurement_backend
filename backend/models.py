@@ -4,6 +4,7 @@ from django.contrib.auth.validators import UnicodeUsernameValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django_rest_passwordreset.tokens import get_token_generator
+from django.core.validators import MinValueValidator
 
 STATE_CHOICES = (
     ('basket', 'Статус корзины'),
@@ -18,17 +19,19 @@ STATE_CHOICES = (
 USER_TYPE_CHOICES = (
     ('shop', 'Магазин'),
     ('buyer', 'Покупатель'),
-
 )
 
 
-
 class UserManager(BaseUserManager):
-
+    """
+    Миксин для управления пользователями
+    """
     use_in_migrations = True
 
     def _create_user(self, email, password, **extra_fields):
-
+        """
+        Create and save a user with the given username, email, and password.
+        """
         if not email:
             raise ValueError('The given email must be set')
         email = self.normalize_email(email)
@@ -55,7 +58,9 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractUser):
-
+    """
+    Стандартная модель пользователей
+    """
     REQUIRED_FIELDS = []
     objects = UserManager()
     USERNAME_FIELD = 'email'
@@ -80,10 +85,11 @@ class User(AbstractUser):
             'Unselect this instead of deleting accounts.'
         ),
     )
-    type = models.CharField(verbose_name='Тип пользователя', choices=USER_TYPE_CHOICES, max_length=5, default='buyer')
+    # Исправление 1: увеличил max_length с 5 до 10
+    type = models.CharField(verbose_name='Тип пользователя', choices=USER_TYPE_CHOICES, max_length=10, default='buyer')
 
     def __str__(self):
-        return f'{self.first_name} {self.last_name}'
+        return f'{self.first_name} {self.last_name} ({self.email})'
 
     class Meta:
         verbose_name = 'Пользователь'
@@ -99,15 +105,13 @@ class Shop(models.Model):
                                 on_delete=models.CASCADE)
     state = models.BooleanField(verbose_name='статус получения заказов', default=True)
 
-    # filename
-
     class Meta:
         verbose_name = 'Магазин'
         verbose_name_plural = "Список магазинов"
         ordering = ('-name',)
 
     def __str__(self):
-        return self.name
+        return f'{self.name} ({"активен" if self.state else "неактивен"})'
 
 
 class Category(models.Model):
@@ -134,7 +138,7 @@ class Product(models.Model):
         ordering = ('-name',)
 
     def __str__(self):
-        return self.name
+        return f'{self.name} ({self.category.name if self.category else "без категории"})'
 
 
 class ProductInfo(models.Model):
@@ -145,8 +149,19 @@ class ProductInfo(models.Model):
     shop = models.ForeignKey(Shop, verbose_name='Магазин', related_name='product_infos', blank=True,
                              on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField(verbose_name='Количество')
-    price = models.PositiveIntegerField(verbose_name='Цена')
-    price_rrc = models.PositiveIntegerField(verbose_name='Рекомендуемая розничная цена')
+    # Исправление 2: заменил PositiveIntegerField на DecimalField для денежных значений
+    price = models.DecimalField(
+        verbose_name='Цена',
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(0)]
+    )
+    price_rrc = models.DecimalField(
+        verbose_name='Рекомендуемая розничная цена',
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(0)]
+    )
 
     class Meta:
         verbose_name = 'Информация о продукте'
@@ -154,6 +169,9 @@ class ProductInfo(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['product', 'shop', 'external_id'], name='unique_product_info'),
         ]
+
+    def __str__(self):
+        return f'{self.product.name} - {self.shop.name} - {self.price} руб.'
 
 
 class Parameter(models.Model):
@@ -183,6 +201,9 @@ class ProductParameter(models.Model):
             models.UniqueConstraint(fields=['product_info', 'parameter'], name='unique_product_parameter'),
         ]
 
+    def __str__(self):
+        return f'{self.parameter.name}: {self.value}'
+
 
 class Contact(models.Model):
     user = models.ForeignKey(User, verbose_name='Пользователь',
@@ -202,7 +223,7 @@ class Contact(models.Model):
         verbose_name_plural = "Список контактов пользователя"
 
     def __str__(self):
-        return f'{self.city} {self.street} {self.house}'
+        return f'{self.city}, ул. {self.street}, д. {self.house} ({self.user.email})'
 
 
 class Order(models.Model):
@@ -210,24 +231,23 @@ class Order(models.Model):
                              related_name='orders', blank=True,
                              on_delete=models.CASCADE)
     dt = models.DateTimeField(auto_now_add=True)
-    state = models.CharField(verbose_name='Статус', choices=STATE_CHOICES, max_length=15)
+    status = models.CharField(verbose_name='Статус', choices=STATE_CHOICES, max_length=15)
     contact = models.ForeignKey(Contact, verbose_name='Контакт',
                                 blank=True, null=True,
                                 on_delete=models.CASCADE)
 
     class Meta:
         verbose_name = 'Заказ'
-        verbose_name_plural = "Список заказ"
+        verbose_name_plural = "Список заказов"
         ordering = ('-dt',)
 
     def __str__(self):
-        return str(self.dt)
+        return f'Заказ #{self.id} от {self.dt.strftime("%d.%m.%Y %H:%M")} ({self.get_status_display()})'
 
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, verbose_name='Заказ', related_name='ordered_items', blank=True,
                               on_delete=models.CASCADE)
-
     product_info = models.ForeignKey(ProductInfo, verbose_name='Информация о продукте', related_name='ordered_items',
                                      blank=True,
                                      on_delete=models.CASCADE)
@@ -239,6 +259,9 @@ class OrderItem(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['order_id', 'product_info'], name='unique_order_item'),
         ]
+
+    def __str__(self):
+        return f'{self.product_info.product.name} x {self.quantity}'
 
 
 class ConfirmEmailToken(models.Model):
@@ -277,7 +300,7 @@ class ConfirmEmailToken(models.Model):
         return super(ConfirmEmailToken, self).save(*args, **kwargs)
 
     def __str__(self):
-        return "Password reset token for user {user}".format(user=self.user)
+        return f"Токен подтверждения для {self.user.email}"
 
 
 
