@@ -1,3 +1,4 @@
+# Django и DRF импорты
 from rest_framework import viewsets, permissions, generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -6,9 +7,26 @@ from rest_framework.decorators import api_view, permission_classes, authenticati
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.authentication import TokenAuthentication
 
-from .models import Shop, Category, Product, ProductInfo
-from .serializers import ShopSerializer, CategorySerializer, ProductSerializer, ProductInfoSerializer, UserLoginSerializer, UserProfileSerializer, UserRegisterSerializer
+# Для работы с YAML и импортом
+import yaml
+import requests
+from django.core.validators import URLValidator
+from django.core.exceptions import ValidationError
+
+# Наши собственные модули
+from backend.import_logic import YamlImporter
+from .models import (
+    Shop, Category, Product, ProductInfo, Parameter,
+    ProductParameter, Contact, Order, OrderItem, User
+)
+from .serializers import (
+    ShopSerializer, CategorySerializer, ProductSerializer,
+    ProductInfoSerializer, UserLoginSerializer, UserProfileSerializer,
+    UserRegisterSerializer, ContactSerializer, OrderSerializer,
+    OrderItemSerializer, BasketSerializer, BasketItemSerializer
+)
 from .permissions import IsBuyer, IsShop
+from django.contrib.auth import authenticate
 
 # ==================== VIEWSETS ДЛЯ КАТАЛОГА ====================
 
@@ -181,136 +199,54 @@ from backend.models import Shop, Category, Product, ProductInfo, Parameter, Prod
 
 class PartnerUpdate(APIView):
     """
-    Класс для обновления прайса от поставщика через YAML (URL или файл).
+    Класс для обновления прайса от поставщика через YAML
     """
-    authentication_classes = [TokenAuthentication]
-    permission_classes = [IsShop]  # Только для магазинов
-    
+
     def post(self, request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return Response({'Status': False, 'Error': 'Требуется авторизация'}, status=403)
+
+        if request.user.type != 'shop':
+            return Response({'Status': False, 'Error': 'Только для магазинов'}, status=403)
+
         # Получаем магазин пользователя
         try:
             shop = Shop.objects.get(user=request.user)
         except Shop.DoesNotExist:
-            return Response(
-                {'Status': False, 'Error': 'Магазин не найден для данного пользователя'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
+            return Response({'Status': False, 'Error': 'Магазин не найден для данного пользователя'}, status=400)
+
         url = request.data.get('url')
-        if url:
-            # Валидация URL
-            validate_url = URLValidator()
-            try:
-                validate_url(url)
-            except ValidationError as e:
-                return Response({'Status': False, 'Error': str(e)}, status=400)
-            
-            # Загрузка данных по URL
-            try:
-                response = requests.get(url, timeout=10)
-                response.raise_for_status()
-                data = yaml.safe_load(response.content)
-            except requests.RequestException as e:
-                return Response({'Status': False, 'Error': f'Ошибка загрузки по URL: {e}'}, status=400)
-            except yaml.YAMLError as e:
-                return Response({'Status': False, 'Error': f'Ошибка YAML: {e}'}, status=400)
-            
-            result = self.process_yaml_data(data, shop)
-            return Response(result)
-        
-        # Импорт из загруженного файла
         file = request.FILES.get('file')
-        if file:
+
+        if url:
+            try:
+                data = YamlImporter.load_yaml(url)
+                result = YamlImporter.process_data(data, shop)
+                return Response({
+                    'Status': True,
+                    'Message': 'Прайс-лист успешно обновлен',
+                    'Shop': result['shop'].name,
+                    'Categories': result['categories'],
+                    'Products': result['products']
+                })
+            except Exception as e:
+                return Response({'Status': False, 'Error': str(e)}, status=400)
+
+        elif file:
             try:
                 data = yaml.safe_load(file)
-                result = self.process_yaml_data(data, shop)
-                return Response(result)
-            except yaml.YAMLError as e:
-                return Response({'Status': False, 'Error': f'Ошибка YAML: {str(e)}'}, status=400)
-        
+                result = YamlImporter.process_data(data, shop)
+                return Response({
+                    'Status': True,
+                    'Message': 'Файл успешно обработан',
+                    'Shop': result['shop'].name,
+                    'Categories': result['categories'],
+                    'Products': result['products']
+                })
+            except Exception as e:
+                return Response({'Status': False, 'Error': str(e)}, status=400)
+
         return Response({'Status': False, 'Error': 'Не указаны данные для импорта'}, status=400)
-    
-    def process_yaml_data(self, data, shop):
-        """Обработка YAML данных (общая логика для URL и файла)"""
-        if not data or 'shop' not in data:
-            return {'Status': False, 'Error': 'Неверный формат YAML файла'}
-        
-        categories = data.get('categories', [])
-        goods = data.get('goods', [])
-        
-        # Обновляем название магазина, если изменилось
-        if shop.name != data['shop']:
-            shop.name = data['shop']
-            shop.save()
-        
-        # Обрабатываем категории
-        category_map = {}
-        for cat_data in categories:
-            category_id = cat_data.get('id')
-            category_name = cat_data.get('name')
-            
-            if not category_id or not category_name:
-                continue
-            
-            category, created = Category.objects.get_or_create(
-                id=category_id,
-                defaults={'name': category_name}
-            )
-            category.shops.add(shop)
-            category_map[category_id] = category
-        
-        # Очищаем старые товары магазина
-        ProductInfo.objects.filter(shop=shop).delete()
-        
-        # Обрабатываем товары
-        imported_count = 0
-        for item in goods:
-            try:
-                category_id = item.get('category')
-                if category_id not in category_map:
-                    continue
-                
-                category = category_map[category_id]
-                
-                # Создаем или получаем продукт
-                product, _ = Product.objects.get_or_create(
-                    name=item['name'],
-                    category=category
-                )
-                
-                # Создаем информацию о продукте
-                product_info = ProductInfo.objects.create(
-                    product=product,
-                    shop=shop,
-                    external_id=item['id'],
-                    model=item.get('model', ''),
-                    quantity=item['quantity'],
-                    price=item['price'],
-                    price_rrc=item['price_rrc']
-                )
-                
-                # Обрабатываем параметры
-                parameters = item.get('parameters', {})
-                for param_name, param_value in parameters.items():
-                    param_value_str = str(param_value)
-                    parameter, _ = Parameter.objects.get_or_create(name=param_name)
-                    ProductParameter.objects.create(
-                        product_info=product_info,
-                        parameter=parameter,
-                        value=param_value_str
-                    )
-                
-                imported_count += 1
-                
-            except Exception:
-                continue
-        
-        return {
-            'Status': True,
-            'Message': f'Прайс-лист обновлен. Магазин: {shop.name}',
-            'Categories': len(category_map),
-            'Products': imported_count
-        }
 
 # ==================== КОРЗИНА ====================
 
@@ -436,3 +372,95 @@ class BasketViewSet(viewsets.ModelViewSet):
             {'status': True, 'message': 'Товар удален из корзины'},
             status=status.HTTP_200_OK
         )
+
+
+class ContactViewSet(viewsets.ModelViewSet):
+    """
+    CRUD для контактов доставки пользователя.
+    Только авторизованные пользователи могут управлять своими контактами.
+    """
+    serializer_class = ContactSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """Возвращаем только контакты текущего пользователя"""
+        return Contact.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        """При создании автоматически привязываем к текущему пользователю"""
+        serializer.save(user=self.request.user)
+
+
+class OrderConfirmView(APIView):
+    """
+    Оформление заказа из корзины
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """Подтверждение заказа с выбором контакта доставки"""
+        contact_id = request.data.get('contact_id')
+
+        if not contact_id:
+            return Response({
+                'status': False,
+                'error': 'Укажите контакт доставки'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Проверяем что контакт принадлежит пользователю
+        try:
+            contact = Contact.objects.get(id=contact_id, user=request.user)
+        except Contact.DoesNotExist:
+            return Response({
+                'status': False,
+                'error': 'Контакт не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Находим корзину пользователя
+        try:
+            basket = Order.objects.get(user=request.user, status='basket')
+        except Order.DoesNotExist:
+            return Response({
+                'status': False,
+                'error': 'Корзина пуста'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Проверяем что в корзине есть товары
+        if not basket.ordered_items.exists():
+            return Response({
+                'status': False,
+                'error': 'Корзина пуста'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Проверяем наличие товаров на складе
+        for item in basket.ordered_items.all():
+            if item.quantity > item.product_info.quantity:
+                return Response({
+                    'status': False,
+                    'error': f'Недостаточно товара "{item.product_info.product.name}". Доступно: {item.product_info.quantity}, в корзине: {item.quantity}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Обновляем статус заказа и привязываем контакт
+        basket.status = 'new'
+        basket.contact = contact
+        basket.save()
+
+        # TODO: Отправка email клиенту и администратору
+
+        return Response({
+            'status': True,
+            'message': 'Заказ успешно оформлен',
+            'order_id': basket.id,
+            'total_price': sum(item.quantity * item.product_info.price for item in basket.ordered_items.all())
+        })
+
+
+class OrderViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Просмотр заказов пользователя
+    """
+    serializer_class = OrderSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Order.objects.filter(user=self.request.user).exclude(status='basket')

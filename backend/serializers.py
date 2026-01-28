@@ -65,6 +65,10 @@ class ContactSerializer(serializers.ModelSerializer):
         fields = ['id', 'city', 'street', 'house', 'structure', 'building', 'apartment', 'phone']
         read_only_fields = ['id']
 
+    def create(self, validated_data):
+        validated_data['user'] = self.context['request'].user
+        return super().create(validated_data)
+
 
 class OrderItemSerializer(serializers.ModelSerializer):
     product_info = ProductInfoSerializer(read_only=True)
@@ -88,9 +92,6 @@ class OrderSerializer(serializers.ModelSerializer):
 # ==================== АУТЕНТИФИКАЦИЯ ====================
 
 class UserLoginSerializer(serializers.Serializer):
-    """
-    Сериализатор для входа пользователя.
-    """
     email = serializers.EmailField(required=True)
     password = serializers.CharField(
         required=True,
@@ -100,10 +101,6 @@ class UserLoginSerializer(serializers.Serializer):
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
-    """
-    Сериализатор для профиля пользователя.
-    """
-
     class Meta:
         model = User
         fields = [
@@ -114,9 +111,6 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 
 class UserRegisterSerializer(serializers.ModelSerializer):
-    """
-    Сериализатор для регистрации пользователя.
-    """
     password = serializers.CharField(
         write_only=True,
         required=True,
@@ -153,56 +147,45 @@ class UserRegisterSerializer(serializers.ModelSerializer):
             type=validated_data.get('type', 'buyer')
         )
         return user
+
+
 # ==================== КОРЗИНА ====================
 
 class BasketItemSerializer(serializers.ModelSerializer):
-    """
-    Сериализатор для элементов корзины.
-    """
     product_info = ProductInfoSerializer(read_only=True)
     product_info_id = serializers.IntegerField(write_only=True, required=False)
-    
+
     class Meta:
         model = OrderItem
         fields = ['id', 'product_info', 'product_info_id', 'quantity']
         read_only_fields = ['id']
-    
+
     def validate_product_info_id(self, value):
-        """
-        Проверяем что товар существует.
-        """
         try:
             ProductInfo.objects.get(id=value)
         except ProductInfo.DoesNotExist:
             raise serializers.ValidationError("Товар не найден")
         return value
-    
+
     def validate_quantity(self, value):
-        """
-        Проверяем что количество положительное.
-        """
         if value < 1:
             raise serializers.ValidationError("Количество должно быть положительным")
         return value
 
 
 class BasketSerializer(serializers.ModelSerializer):
-    """
-    Сериализатор для корзины пользователя.
-    """
     ordered_items = BasketItemSerializer(many=True, read_only=True)
     total_price = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Order
         fields = ['id', 'ordered_items', 'total_price', 'status', 'dt']
         read_only_fields = ['id', 'status', 'dt']
-    
+
     def get_total_price(self, obj):
-        """
-        Рассчитываем общую стоимость корзины.
-        """
         total = 0
         for item in obj.ordered_items.all():
             total += item.quantity * item.product_info.price
         return total
+
+
