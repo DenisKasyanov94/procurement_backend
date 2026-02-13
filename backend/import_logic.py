@@ -1,7 +1,5 @@
 import yaml
 import requests
-from django.core.validators import URLValidator
-from django.core.exceptions import ValidationError
 from .models import Shop, Category, Product, ProductInfo, Parameter, ProductParameter
 
 
@@ -122,7 +120,8 @@ class YamlImporter:
                 parameters = item.get('parameters', {})
                 for param_name, param_value in parameters.items():
                     param_value_str = str(param_value)
-                    parameter, _ = Parameter.objects.get_or_create(name=param_name)
+                    parameter, _ = Parameter.objects.get_or_create(
+                        name=param_name)
                     ProductParameter.objects.create(
                         product_info=product_info,
                         parameter=parameter,

@@ -3,32 +3,35 @@ from rest_framework import viewsets, permissions, generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.authtoken.models import Token
-from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework.decorators import (
+    api_view, permission_classes, authentication_classes
+)
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.authentication import TokenAuthentication
 
 # Для работы с YAML и импортом
 import yaml
-import requests
-from django.core.validators import URLValidator
-from django.core.exceptions import ValidationError
 
 # Наши собственные модули
 from backend.import_logic import YamlImporter
 from .models import (
-    Shop, Category, Product, ProductInfo, Parameter,
-    ProductParameter, Contact, Order, OrderItem, User
+    Shop, Category, Product, ProductInfo, Contact,
+    Order, OrderItem
 )
 from .serializers import (
     ShopSerializer, CategorySerializer, ProductSerializer,
     ProductInfoSerializer, UserLoginSerializer, UserProfileSerializer,
     UserRegisterSerializer, ContactSerializer, OrderSerializer,
-    OrderItemSerializer, BasketSerializer, BasketItemSerializer
+    BasketSerializer, BasketItemSerializer
 )
-from .permissions import IsBuyer, IsShop
-from django.contrib.auth import authenticate
-
+from .permissions import IsBuyer
+from .utils.email_utils import (
+    send_order_confirmation,
+    send_admin_notification,
+    send_registration_confirmation
+)
 # ==================== VIEWSETS ДЛЯ КАТАЛОГА ====================
+
 
 class ShopViewSet(viewsets.ReadOnlyModelViewSet):
     """
@@ -65,7 +68,9 @@ class ProductInfoViewSet(viewsets.ReadOnlyModelViewSet):
     ViewSet для просмотра информации о товарах (цены, наличие в магазинах).
     Доступ: чтение - всем, запись - только авторизованным.
     """
-    queryset = ProductInfo.objects.select_related('product', 'shop').prefetch_related('product_parameters')
+    queryset = ProductInfo.objects.select_related(
+        'product', 'shop'
+    ).prefetch_related('product_parameters')
     serializer_class = ProductInfoSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
@@ -78,21 +83,27 @@ class UserRegisterView(generics.CreateAPIView):
     """
     serializer_class = UserRegisterSerializer
     permission_classes = [AllowAny]
-    
+
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+
+        # Отправляем email с подтверждением
+        from .models import ConfirmEmailToken
+        from .utils.email_utils import send_registration_confirmation
+
+        token = ConfirmEmailToken.objects.create(user=user)
+        send_registration_confirmation(user, token)
+
         return Response(
             {
                 "status": True,
-                "message": "Пользователь успешно создан.",
+                "message": "Пользователь успешно создан. Проверьте email для подтверждения.",
                 "user_id": user.id
             },
             status=status.HTTP_201_CREATED
         )
-
-
 # ==================== АУТЕНТИФИКАЦИЯ ====================
 
 @api_view(['POST'])
@@ -151,7 +162,7 @@ def user_logout(request):
             'status': True,
             'message': 'Успешный выход'
         })
-    except:
+    except BaseException:
         return Response({
             'status': True,
             'message': 'Токен не найден или уже удален'
@@ -190,13 +201,6 @@ def user_profile(request):
 
 # ==================== PARTNER UPDATE ====================
 
-import requests
-import yaml
-from django.core.validators import URLValidator
-from django.core.exceptions import ValidationError
-from backend.models import Shop, Category, Product, ProductInfo, Parameter, ProductParameter
-
-
 class PartnerUpdate(APIView):
     """
     Класс для обновления прайса от поставщика через YAML
@@ -204,16 +208,26 @@ class PartnerUpdate(APIView):
 
     def post(self, request, *args, **kwargs):
         if not request.user.is_authenticated:
-            return Response({'Status': False, 'Error': 'Требуется авторизация'}, status=403)
+            return Response(
+                {'Status': False, 'Error': 'Требуется авторизация'},
+                status=403
+            )
 
         if request.user.type != 'shop':
-            return Response({'Status': False, 'Error': 'Только для магазинов'}, status=403)
+            return Response(
+                {'Status': False, 'Error': 'Только для магазинов'},
+                status=403
+            )
 
         # Получаем магазин пользователя
         try:
             shop = Shop.objects.get(user=request.user)
         except Shop.DoesNotExist:
-            return Response({'Status': False, 'Error': 'Магазин не найден для данного пользователя'}, status=400)
+            return Response(
+                {'Status': False,
+                 'Error': 'Магазин не найден для данного пользователя'},
+                status=400
+            )
 
         url = request.data.get('url')
         file = request.FILES.get('file')
@@ -246,12 +260,13 @@ class PartnerUpdate(APIView):
             except Exception as e:
                 return Response({'Status': False, 'Error': str(e)}, status=400)
 
-        return Response({'Status': False, 'Error': 'Не указаны данные для импорта'}, status=400)
+        return Response(
+            {'Status': False, 'Error': 'Не указаны данные для импорта'},
+            status=400
+        )
+
 
 # ==================== КОРЗИНА ====================
-
-from .serializers import BasketItemSerializer, BasketSerializer
-from .models import Order, OrderItem
 
 class BasketViewSet(viewsets.ModelViewSet):
     """
@@ -259,7 +274,7 @@ class BasketViewSet(viewsets.ModelViewSet):
     """
     serializer_class = BasketItemSerializer
     permission_classes = [IsBuyer]
-    
+
     def get_queryset(self):
         # Получаем или создаем корзину пользователя
         basket, created = Order.objects.get_or_create(
@@ -268,7 +283,7 @@ class BasketViewSet(viewsets.ModelViewSet):
             defaults={'status': 'basket'}
         )
         return basket.ordered_items.all()
-    
+
     def get_basket(self):
         """
         Получаем или создаем корзину пользователя.
@@ -279,7 +294,7 @@ class BasketViewSet(viewsets.ModelViewSet):
             defaults={'status': 'basket'}
         )
         return basket
-    
+
     def list(self, request, *args, **kwargs):
         """
         Просмотр корзины с общей стоимостью.
@@ -287,18 +302,18 @@ class BasketViewSet(viewsets.ModelViewSet):
         basket = self.get_basket()
         serializer = BasketSerializer(basket)
         return Response(serializer.data)
-    
+
     def create(self, request, *args, **kwargs):
         """
         Добавление товара в корзину.
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         basket = self.get_basket()
         product_info_id = serializer.validated_data['product_info_id']
         quantity = serializer.validated_data.get('quantity', 1)
-        
+
         # Проверяем наличие товара
         try:
             product_info = ProductInfo.objects.get(id=product_info_id)
@@ -307,61 +322,79 @@ class BasketViewSet(viewsets.ModelViewSet):
                 {'status': False, 'error': 'Товар не найден'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         # Проверяем достаточно ли товара на складе
         if product_info.quantity < quantity:
             return Response(
-                {'status': False, 'error': f'Недостаточно товара на складе. Доступно: {product_info.quantity}'},
+                {'status': False, 'error': (
+                    f'Недостаточно товара на складе. '
+                    f'Доступно: {product_info.quantity}'
+                )},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         # Проверяем есть ли уже такой товар в корзине
         order_item, created = OrderItem.objects.get_or_create(
             order=basket,
             product_info=product_info,
             defaults={'quantity': quantity}
         )
-        
+
         if not created:
             # Если товар уже в корзине, увеличиваем количество
             order_item.quantity += quantity
             # Проверяем не превышает ли новое количество доступное
             if order_item.quantity > product_info.quantity:
                 return Response(
-                    {'status': False, 'error': f'Недостаточно товара на складе. Доступно: {product_info.quantity}, запрошено: {order_item.quantity}'},
+                    {
+                        'status': False,
+                        'error': (
+                            f'Недостаточно товара на складе. '
+                            f'Доступно: {product_info.quantity}, '
+                            f'запрошено: {order_item.quantity}'
+                        )
+                    },
                     status=status.HTTP_400_BAD_REQUEST
                 )
             order_item.save()
-        
+
         # Возвращаем созданный/обновленный элемент корзины
         serializer = BasketItemSerializer(order_item)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
-    
+
     def update(self, request, *args, **kwargs):
         """
         Обновление количества товара в корзине.
         """
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer = self.get_serializer(
+            instance, data=request.data, partial=partial
+        )
         serializer.is_valid(raise_exception=True)
-        
+
         quantity = serializer.validated_data.get('quantity', instance.quantity)
-        
+
         # Проверяем достаточно ли товара на складе
         if instance.product_info.quantity < quantity:
             return Response(
-                {'status': False, 'error': f'Недостаточно товара на складе. Доступно: {instance.product_info.quantity}'},
+                {
+                    'status': False,
+                    'error': (
+                        f'Недостаточно товара на складе. '
+                        f'Доступно: {instance.product_info.quantity}'
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         self.perform_update(serializer)
-        
+
         if getattr(instance, '_prefetched_objects_cache', None):
             instance._prefetched_objects_cache = {}
-        
+
         return Response(serializer.data)
-    
+
     def destroy(self, request, *args, **kwargs):
         """
         Удаление товара из корзины.
@@ -437,22 +470,36 @@ class OrderConfirmView(APIView):
             if item.quantity > item.product_info.quantity:
                 return Response({
                     'status': False,
-                    'error': f'Недостаточно товара "{item.product_info.product.name}". Доступно: {item.product_info.quantity}, в корзине: {item.quantity}'
+                    'error': (
+                        f'Недостаточно товара "{item.product_info.product.name}". '
+                        f'Доступно: {item.product_info.quantity}, '
+                        f'в корзине: {item.quantity}'
+                    )
                 }, status=status.HTTP_400_BAD_REQUEST)
 
         # Обновляем статус заказа и привязываем контакт
         basket.status = 'new'
         basket.contact = contact
         basket.save()
+        # Отправляем email клиенту и администратору
+        send_order_confirmation(basket)
+        send_admin_notification(basket)
 
         # TODO: Отправка email клиенту и администратору
 
-        return Response({
-            'status': True,
-            'message': 'Заказ успешно оформлен',
-            'order_id': basket.id,
-            'total_price': sum(item.quantity * item.product_info.price for item in basket.ordered_items.all())
-        })
+        total_price = sum(
+            item.quantity * item.product_info.price
+            for item in basket.ordered_items.all()
+        )
+
+        return Response(
+            {
+                'status': True,
+                'message': 'Заказ успешно оформлен',
+                'order_id': basket.id,
+                'total_price': total_price
+            }
+        )
 
 
 class OrderViewSet(viewsets.ReadOnlyModelViewSet):
@@ -463,4 +510,6 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Order.objects.filter(user=self.request.user).exclude(status='basket')
+        return Order.objects.filter(
+            user=self.request.user
+        ).exclude(status='basket')

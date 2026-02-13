@@ -2,31 +2,37 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
 from .models import (
-    User, Shop, Category, Product, ProductInfo, 
-    Parameter, ProductParameter, Contact, Order, 
+    User, Shop, Category, Product, ProductInfo,
+    Parameter, ProductParameter, Contact, Order,
     OrderItem, ConfirmEmailToken
 )
 
 
 class UserAdmin(BaseUserAdmin):
-    list_display = ('email', 'first_name', 'last_name', 'type', 'company', 'is_staff', 'is_active')
+    list_display = (
+        'email',
+        'first_name',
+        'last_name',
+        'type',
+        'company',
+        'is_staff',
+        'is_active')
     list_filter = ('type', 'is_staff', 'is_active', 'is_superuser')
     search_fields = ('email', 'first_name', 'last_name', 'company')
     ordering = ('email',)
-    
+
     fieldsets = (
         (None, {'fields': ('email', 'password')}),
         (_('Personal info'), {'fields': ('first_name', 'last_name', 'company', 'position', 'type')}),
         (_('Permissions'), {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
         (_('Important dates'), {'fields': ('last_login', 'date_joined')}),
     )
-    
+
     add_fieldsets = (
         (None, {
-            'classes': ('wide',),
-            'fields': ('email', 'password1', 'password2', 'first_name', 'last_name', 'type'),
-        }),
-    )
+            'classes': (
+                'wide',), 'fields': (
+                'email', 'password1', 'password2', 'first_name', 'last_name', 'type'), }), )
 
 
 class ShopAdmin(admin.ModelAdmin):
@@ -40,7 +46,7 @@ class CategoryAdmin(admin.ModelAdmin):
     list_display = ('name', 'display_shops')
     search_fields = ('name',)
     filter_horizontal = ('shops',)
-    
+
     def display_shops(self, obj):
         return ", ".join([shop.name for shop in obj.shops.all()])
     display_shops.short_description = 'Магазины'
@@ -54,7 +60,13 @@ class ProductAdmin(admin.ModelAdmin):
 
 
 class ProductInfoAdmin(admin.ModelAdmin):
-    list_display = ('product', 'shop', 'price', 'price_rrc', 'quantity', 'external_id')
+    list_display = (
+        'product',
+        'shop',
+        'price',
+        'price_rrc',
+        'quantity',
+        'external_id')
     list_filter = ('shop',)
     search_fields = ('product__name', 'model', 'external_id')
     raw_id_fields = ('product', 'shop')

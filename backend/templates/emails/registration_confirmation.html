@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Подтверждение регистрации</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #4CAF50; color: white; padding: 10px; text-align: center; }
+        .content { margin: 20px 0; }
+        .token { background: #f2f2f2; padding: 15px; font-size: 24px; text-align: center; margin: 20px 0; }
+        .footer { margin-top: 30px; text-align: center; color: #777; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>Подтверждение регистрации</h2>
+        </div>
+        
+        <div class="content">
+            <p>Здравствуйте, {{ user.first_name }}!</p>
+            <p>Для подтверждения регистрации используйте следующий токен:</p>
+            
+            <div class="token">
+                <strong>{{ token }}</strong>
+            </div>
+            
+            <p>Токен действителен в течение 24 часов.</p>
+        </div>
+        
+        <div class="footer">
+            <p>С уважением, команда сервиса закупок</p>
+        </div>
+    </div>
+</body>
+</html>

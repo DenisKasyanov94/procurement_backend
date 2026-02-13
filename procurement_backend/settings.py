@@ -150,3 +150,15 @@ REST_FRAMEWORK = {
 }
 
 AUTH_USER_MODEL = 'backend.User'
+
+# Email settings (для разработки используем консольный вывод)
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = 'noreply@procurement.com'
+
+# Для продакшена раскомментируй и настрой:
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# EMAIL_HOST = 'smtp.gmail.com'
+# EMAIL_PORT = 587
+# EMAIL_USE_TLS = True
+# EMAIL_HOST_USER = 'your-email@gmail.com'
+# EMAIL_HOST_PASSWORD = 'your-app-password'

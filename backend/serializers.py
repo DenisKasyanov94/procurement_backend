@@ -5,7 +5,15 @@ from .models import User, Shop, Category, Product, ProductInfo, Parameter, Produ
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'company', 'position', 'type', 'is_active']
+        fields = [
+            'id',
+            'email',
+            'first_name',
+            'last_name',
+            'company',
+            'position',
+            'type',
+            'is_active']
         read_only_fields = ['id', 'is_active']
 
 
@@ -54,15 +62,31 @@ class ProductInfoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProductInfo
-        fields = ['id', 'external_id', 'model', 'product', 'shop', 'quantity', 'price', 'price_rrc',
-                  'product_parameters']
+        fields = [
+            'id',
+            'external_id',
+            'model',
+            'product',
+            'shop',
+            'quantity',
+            'price',
+            'price_rrc',
+            'product_parameters']
         read_only_fields = ['id']
 
 
 class ContactSerializer(serializers.ModelSerializer):
     class Meta:
         model = Contact
-        fields = ['id', 'city', 'street', 'house', 'structure', 'building', 'apartment', 'phone']
+        fields = [
+            'id',
+            'city',
+            'street',
+            'house',
+            'structure',
+            'building',
+            'apartment',
+            'phone']
         read_only_fields = ['id']
 
     def create(self, validated_data):
@@ -132,7 +156,8 @@ class UserRegisterSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
-            raise serializers.ValidationError({"password": "Пароли не совпадают"})
+            raise serializers.ValidationError(
+                {"password": "Пароли не совпадают"})
         return attrs
 
     def create(self, validated_data):
@@ -169,7 +194,8 @@ class BasketItemSerializer(serializers.ModelSerializer):
 
     def validate_quantity(self, value):
         if value < 1:
-            raise serializers.ValidationError("Количество должно быть положительным")
+            raise serializers.ValidationError(
+                "Количество должно быть положительным")
         return value
 
 
@@ -187,5 +213,3 @@ class BasketSerializer(serializers.ModelSerializer):
         for item in obj.ordered_items.all():
             total += item.quantity * item.product_info.price
         return total
-
-
